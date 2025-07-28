@@ -34,12 +34,10 @@
     return isNaN(page) ? 1 : page;
   }
 
-  const decoration = '%28entityUrn%2Cname%2CcompanyName%2Caccount%28saved%2CnoteCount%2ClistCount%2CcrmStatus%29' +
-    '%2CpictureInfo%2CcompanyPictureDisplayImage%2Cdescription%2Cindustry%2CemployeeCount' +
-    '%2CemployeeDisplayCount%2CemployeeCountRange%2Clocation%2Cheadquarters%2Cwebsite' +
-    '%2Crevenue%2CformattedRevenue%2CrevenueRange%2CannualRevenue%2CemployeesSearchPageUrl%2CflagshipCompanyUrl' +
-    '%2Cemployees*~fs_salesProfile%28entityUrn%2CfirstName%2ClastName%2CfullName' +
-    '%2CpictureInfo%2CprofilePictureDisplayImage%29%29';
+  // Simplified decoration to get core company data
+  const decoration = '(entityUrn,name,companyName,description,industry,employeeCount,employeeDisplayCount,' +
+    'employeeCountRange,location,headquarters,website,revenue,formattedRevenue,revenueRange,' +
+    'annualRevenue,flagshipCompanyUrl,companyUrl,websiteUrl,primaryLocation,geographicArea)';
 
   async function fetchCompanyData(companyUrn) {
     if (!companyUrn) return { employeeCount: null, location: null, geographicArea: null, industry: null, website: null, flagshipCompanyUrl: null };
@@ -702,38 +700,72 @@
         const processedAccounts = [];
         for (const account of data.elements) {
           console.log('Processing account:', account); // Debug log
+          console.log('Available account fields:', Object.keys(account)); // Debug log
           
           const companyId = account.entityUrn ? account.entityUrn.split(':').pop() : null;
           let enhancedData = {};
           
+          // Temporarily skip enhanced data fetching to debug basic search results
+          // TODO: Re-enable enhanced data fetching once we fix basic data extraction
+          
           // Fetch enhanced company details if companyId exists
-          if (companyId) {
+          if (false && companyId) { // Temporarily disabled
             try {
               // Add small delay to avoid rate limiting
               await new Promise(resolve => setTimeout(resolve, 500));
               enhancedData = await fetchCompanyDetails(companyId);
               console.log('Enhanced data for', account.name, ':', enhancedData); // Debug log
+              console.log('Available enhanced fields:', Object.keys(enhancedData)); // Debug log
             } catch (error) {
               console.error('Error fetching enhanced data for company:', companyId, error);
               enhancedData = {}; // Ensure we have an empty object
             }
           }
 
+          // Extract location data from multiple possible sources
+          let locationData = '';
+          let headquartersData = '';
+          let websiteData = '';
+          let revenueData = '';
+
+          // Location extraction - check multiple possible field names
+          locationData = account.location || account.companyLocation || account.primaryLocation || 
+                        account.geographicArea || enhancedData.location || enhancedData.companyLocation ||
+                        (account.headquarters && (account.headquarters.city || account.headquarters.geographicArea)) ||
+                        (enhancedData.headquarters && (enhancedData.headquarters.city || enhancedData.headquarters.geographicArea)) || '';
+
+          // Headquarters extraction
+          if (account.headquarters) {
+            headquartersData = `${account.headquarters.city || ''}, ${account.headquarters.geographicArea || ''}`.trim().replace(/^,\s*|,\s*$/g, '');
+          } else if (enhancedData.headquarters) {
+            headquartersData = `${enhancedData.headquarters.city || ''}, ${enhancedData.headquarters.geographicArea || ''}`.trim().replace(/^,\s*|,\s*$/g, '');
+          } else if (account.location) {
+            headquartersData = account.location;
+          }
+
+          // Website extraction - check multiple possible field names
+          websiteData = account.website || account.companyUrl || account.url || account.websiteUrl ||
+                       enhancedData.website || enhancedData.companyUrl || enhancedData.url || enhancedData.websiteUrl || '';
+
+          // Revenue extraction - check multiple possible field names
+          revenueData = account.formattedRevenue || account.revenue || account.revenueRange || account.annualRevenue ||
+                       account.revenueDisplay || account.companyRevenue || 
+                       enhancedData.formattedRevenue || enhancedData.revenue || enhancedData.revenueRange || 
+                       enhancedData.annualRevenue || enhancedData.revenueDisplay || enhancedData.companyRevenue || '';
+
+          console.log('Extracted data:', { locationData, headquartersData, websiteData, revenueData }); // Debug log
+
           const processedAccount = {
             companyName: account.name || account.companyName || enhancedData.name || '',
             industry: account.industry || enhancedData.industry || '',
             employeeCount: account.employeeCount || enhancedData.employeeCount || account.employeeDisplayCount || '',
             employeeCountRange: account.employeeCountRange || enhancedData.employeeCountRange || '',
-            location: account.location || enhancedData.location || (enhancedData.headquarters ? enhancedData.headquarters.city : '') || '',
-            headquarters: enhancedData.headquarters ? 
-              `${enhancedData.headquarters.city || ''}, ${enhancedData.headquarters.geographicArea || ''}`.trim().replace(/^,\s*|,\s*$/g, '') : 
-              (account.headquarters ? `${account.headquarters.city || ''}, ${account.headquarters.geographicArea || ''}`.trim().replace(/^,\s*|,\s*$/g, '') : ''),
-            website: account.website || enhancedData.website || '',
-            revenue: enhancedData.formattedRevenue || enhancedData.revenue || enhancedData.revenueRange || 
-                     enhancedData.annualRevenue || account.formattedRevenue || account.revenue || 
-                     account.revenueRange || account.annualRevenue || '',
+            location: locationData,
+            headquarters: headquartersData,
+            website: websiteData,
+            revenue: revenueData,
             description: enhancedData.description || account.description || '',
-            linkedinUrl: enhancedData.flagshipCompanyUrl || account.flagshipCompanyUrl || '',
+            linkedinUrl: enhancedData.flagshipCompanyUrl || account.flagshipCompanyUrl || account.companyUrl || enhancedData.companyUrl || '',
             entityUrn: account.entityUrn || '',
             scrapedDate: new Date().toISOString(),
             pageNumber: currentPage
