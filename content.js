@@ -34,10 +34,10 @@
     return isNaN(page) ? 1 : page;
   }
 
-  const decoration = '%28entityUrn%2Cname%2Caccount%28saved%2CnoteCount%2ClistCount%2CcrmStatus%29' +
+  const decoration = '%28entityUrn%2Cname%2CcompanyName%2Caccount%28saved%2CnoteCount%2ClistCount%2CcrmStatus%29' +
     '%2CpictureInfo%2CcompanyPictureDisplayImage%2Cdescription%2Cindustry%2CemployeeCount' +
     '%2CemployeeDisplayCount%2CemployeeCountRange%2Clocation%2Cheadquarters%2Cwebsite' +
-    '%2Crevenue%2CformattedRevenue%2CemployeesSearchPageUrl%2CflagshipCompanyUrl' +
+    '%2Crevenue%2CformattedRevenue%2CrevenueRange%2CannualRevenue%2CemployeesSearchPageUrl%2CflagshipCompanyUrl' +
     '%2Cemployees*~fs_salesProfile%28entityUrn%2CfirstName%2ClastName%2CfullName' +
     '%2CpictureInfo%2CprofilePictureDisplayImage%29%29';
 
@@ -691,6 +691,8 @@
           break;
         }
         const data = await response.json();
+        console.log('API Response for page', currentPage, ':', data); // Debug log
+        
         if (!data?.elements?.length) {
           updateUI({ statusMessage: `⚠️ No accounts on page ${currentPage}` });
           break;
@@ -699,35 +701,45 @@
         // Process and enhance account data
         const processedAccounts = [];
         for (const account of data.elements) {
+          console.log('Processing account:', account); // Debug log
+          
           const companyId = account.entityUrn ? account.entityUrn.split(':').pop() : null;
           let enhancedData = {};
           
           // Fetch enhanced company details if companyId exists
           if (companyId) {
             try {
+              // Add small delay to avoid rate limiting
+              await new Promise(resolve => setTimeout(resolve, 500));
               enhancedData = await fetchCompanyDetails(companyId);
+              console.log('Enhanced data for', account.name, ':', enhancedData); // Debug log
             } catch (error) {
               console.error('Error fetching enhanced data for company:', companyId, error);
+              enhancedData = {}; // Ensure we have an empty object
             }
           }
 
           const processedAccount = {
-            companyName: account.name || '',
+            companyName: account.name || account.companyName || enhancedData.name || '',
             industry: account.industry || enhancedData.industry || '',
-            employeeCount: account.employeeCount || enhancedData.employeeCount || '',
-            employeeCountRange: enhancedData.employeeCountRange || '',
-            location: account.location || enhancedData.location || '',
+            employeeCount: account.employeeCount || enhancedData.employeeCount || account.employeeDisplayCount || '',
+            employeeCountRange: account.employeeCountRange || enhancedData.employeeCountRange || '',
+            location: account.location || enhancedData.location || (enhancedData.headquarters ? enhancedData.headquarters.city : '') || '',
             headquarters: enhancedData.headquarters ? 
-              `${enhancedData.headquarters.city || ''}, ${enhancedData.headquarters.geographicArea || ''}`.trim().replace(/^,\s*|,\s*$/g, '') : '',
+              `${enhancedData.headquarters.city || ''}, ${enhancedData.headquarters.geographicArea || ''}`.trim().replace(/^,\s*|,\s*$/g, '') : 
+              (account.headquarters ? `${account.headquarters.city || ''}, ${account.headquarters.geographicArea || ''}`.trim().replace(/^,\s*|,\s*$/g, '') : ''),
             website: account.website || enhancedData.website || '',
-            revenue: enhancedData.formattedRevenue || enhancedData.revenue || '',
-            description: enhancedData.description || '',
-            linkedinUrl: enhancedData.flagshipCompanyUrl || '',
+            revenue: enhancedData.formattedRevenue || enhancedData.revenue || enhancedData.revenueRange || 
+                     enhancedData.annualRevenue || account.formattedRevenue || account.revenue || 
+                     account.revenueRange || account.annualRevenue || '',
+            description: enhancedData.description || account.description || '',
+            linkedinUrl: enhancedData.flagshipCompanyUrl || account.flagshipCompanyUrl || '',
             entityUrn: account.entityUrn || '',
             scrapedDate: new Date().toISOString(),
             pageNumber: currentPage
           };
           
+          console.log('Processed account:', processedAccount); // Debug log
           processedAccounts.push(processedAccount);
         }
 
@@ -766,8 +778,13 @@
     };
     try {
       const resp = await fetch(url, { credentials: 'include', headers });
-      if (!resp.ok) return {};
-      return await resp.json();
+      if (!resp.ok) {
+        console.warn(`Failed to fetch company details for ${companyId}: ${resp.status}`);
+        return {};
+      }
+      const data = await resp.json();
+      console.log(`Company details API response for ${companyId}:`, data); // Debug log
+      return data;
     } catch (e) {
       console.error('Error fetching company details:', e);
       return {};
