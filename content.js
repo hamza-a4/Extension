@@ -34,10 +34,11 @@
     return isNaN(page) ? 1 : page;
   }
 
-  // Simplified decoration to get core company data
-  const decoration = '(entityUrn,name,companyName,description,industry,employeeCount,employeeDisplayCount,' +
-    'employeeCountRange,location,headquarters,website,revenue,formattedRevenue,revenueRange,' +
-    'annualRevenue,flagshipCompanyUrl,companyUrl,websiteUrl,primaryLocation,geographicArea)';
+  // Comprehensive decoration parameter for LinkedIn Sales API - properly URL encoded
+  const decoration = '%28entityUrn%2Cname%2Cdescription%2Cindustry%2CemployeeCount%2CemployeeDisplayCount%2C' +
+    'employeeCountRange%2Clocation%2Cheadquarters%28city%2CgeographicArea%2Ccountry%29%2Cwebsite%2C' +
+    'revenue%2CformattedRevenue%2CrevenueRange%2CannualRevenue%2CflagshipCompanyUrl%2C' +
+    'account%28saved%2CnoteCount%2ClistCount%2CcrmStatus%29%2CpictureInfo%2CcompanyPictureDisplayImage%29';
 
   async function fetchCompanyData(companyUrn) {
     if (!companyUrn) return { employeeCount: null, location: null, geographicArea: null, industry: null, website: null, flagshipCompanyUrl: null };
@@ -670,7 +671,7 @@
           count: '25',
           savedSearchId,
           trackingParam: `(sessionId:${sessionId})`,
-          decorationId: 'com.linkedin.sales.deco.desktop.searchv2.AccountSearchResult-4'
+          decorationId: 'com.linkedin.sales.deco.desktop.searchv2.AccountSearchResult-14'
         });
         const apiUrl = `https://www.linkedin.com/sales-api/salesApiAccountSearch?${queryParams.toString()}`;
         const headers = {
@@ -705,19 +706,25 @@
           const companyId = account.entityUrn ? account.entityUrn.split(':').pop() : null;
           let enhancedData = {};
           
-          // Temporarily skip enhanced data fetching to debug basic search results
-          // TODO: Re-enable enhanced data fetching once we fix basic data extraction
-          
-          // Fetch enhanced company details if companyId exists
-          if (false && companyId) { // Temporarily disabled
+          // Fetch enhanced company details if companyId exists - this is crucial for getting location, website, revenue data
+          if (companyId) {
             try {
               // Add small delay to avoid rate limiting
-              await new Promise(resolve => setTimeout(resolve, 500));
+              await new Promise(resolve => setTimeout(resolve, 300));
               enhancedData = await fetchCompanyDetails(companyId);
-              console.log('Enhanced data for', account.name, ':', enhancedData); // Debug log
-              console.log('Available enhanced fields:', Object.keys(enhancedData)); // Debug log
+              console.log(`✅ Enhanced data fetched for ${account.name} (ID: ${companyId}):`, enhancedData);
+              
+              // Log specific fields we're looking for
+              console.log('Key fields:', {
+                location: enhancedData.location,
+                headquarters: enhancedData.headquarters,
+                website: enhancedData.website,
+                revenue: enhancedData.revenue,
+                formattedRevenue: enhancedData.formattedRevenue,
+                flagshipCompanyUrl: enhancedData.flagshipCompanyUrl
+              });
             } catch (error) {
-              console.error('Error fetching enhanced data for company:', companyId, error);
+              console.error(`❌ Error fetching enhanced data for ${account.name} (ID: ${companyId}):`, error);
               enhancedData = {}; // Ensure we have an empty object
             }
           }
@@ -806,19 +813,28 @@
     const headers = {
       'Csrf-Token': getCsrfToken(),
       'Accept': 'application/json, */*',
-      'x-restli-protocol-version': '2.0.0'
+      'x-restli-protocol-version': '2.0.0',
+      'x-li-lang': 'en_US',
+      'x-li-track': '{"clientVersion":"2.0.0","osName":"web","osVersion":"unknown","deviceType":"desktop"}',
+      'x-li-page-instance': 'urn:li:page:sales/search',
+      'x-source': 'sales-navigator'
     };
+    
+    console.log(`🔍 Fetching company details from: ${url}`);
+    
     try {
       const resp = await fetch(url, { credentials: 'include', headers });
       if (!resp.ok) {
-        console.warn(`Failed to fetch company details for ${companyId}: ${resp.status}`);
+        console.warn(`❌ Failed to fetch company details for ${companyId}: ${resp.status} - ${resp.statusText}`);
+        const errorText = await resp.text();
+        console.warn('Error response:', errorText);
         return {};
       }
       const data = await resp.json();
-      console.log(`Company details API response for ${companyId}:`, data); // Debug log
+      console.log(`📊 Company details API response for ${companyId}:`, data);
       return data;
     } catch (e) {
-      console.error('Error fetching company details:', e);
+      console.error(`❌ Network error fetching company details for ${companyId}:`, e);
       return {};
     }
   }
