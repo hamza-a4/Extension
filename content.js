@@ -19,6 +19,7 @@
   let scrapeMode = 'leads'; // 'leads' or 'accounts'
   let actualTotalResults = null;
   const companyDataMap = new Map();
+  let scrapedAccountsData = []; // Store scraped accounts for export
 
   function getCsrfToken() {
     const match = document.cookie.match(/JSESSIONID\s*=\s*"?(.*?)"?;/);
@@ -402,6 +403,30 @@
         transition: background-color 0.2s;
       }
 
+      .pagepilot-export-button {
+        width: 80%;
+        margin-left: 30px;
+        height: 52px;
+        font-size: 1.125rem;
+        font-weight: 600;
+        background-color: #28a745;
+        color: white;
+        border: 0;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        margin-bottom: 12px;
+      }
+
+      .pagepilot-export-button:hover {
+        background-color: #218838;
+      }
+
+      .pagepilot-footer-button:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+      }
+
       .pagepilot-close-button { width:100%; background:transparent; border:0; color: #757575; cursor:pointer; margin-top: 1rem; padding: 0.5rem; font-weight: 500; }
     `;
     document.head.appendChild(style);
@@ -414,8 +439,23 @@
     let progress = 0;
     let scrapingPage = 0;
     let statusMessage = '';
+    let showExportButton = false;
 
     fetchAndSetTotalResults();
+    
+    // Check if there's previously scraped account data
+    const pageType = getPageType();
+    if (pageType === 'accounts') {
+      chrome.storage.local.get(['scrapedAccountsData'], (result) => {
+        if (result.scrapedAccountsData && result.scrapedAccountsData.length > 0) {
+          scrapedAccountsData = result.scrapedAccountsData;
+          updateUI({ 
+            showExportButton: true,
+            statusMessage: `${scrapedAccountsData.length} previously scraped accounts available for export.`
+          });
+        }
+      });
+    }
 
     function render() {
       const pageType = getPageType();
@@ -476,6 +516,15 @@
           <p class="pagepilot-info-text">Scraping page <strong>${scrapingPage}</strong> of <strong>${pageLimit}</strong>...</p>
         </div>
         
+        ${showExportButton && pageType === 'accounts' ? `
+          <button id="export-csv-btn" class="pagepilot-export-button">
+            📊 Export ${scrapedAccountsData.length} Accounts to CSV
+          </button>
+          <button id="clear-data-btn" class="pagepilot-close-button" style="color: #dc3545; font-weight: 600;">
+            🗑️ Clear Scraped Data
+          </button>
+        ` : ''}
+
         <button id="start-scraping-btn" class="pagepilot-footer-button" ${isScrapingUI ? 'disabled' : ''}>
           ${isScrapingUI ? 'Scraping...' : startButtonText}
         </button>
@@ -517,6 +566,16 @@
         });
       });
 
+      document.getElementById('export-csv-btn')?.addEventListener('click', () => {
+        exportAccountsToCSV();
+      });
+
+      document.getElementById('clear-data-btn')?.addEventListener('click', () => {
+        if (confirm('Are you sure you want to clear all scraped account data? This action cannot be undone.')) {
+          clearScrapedData();
+        }
+      });
+
       document.getElementById('start-scraping-btn')?.addEventListener('click', () => {
         if (isScraping) return;
         isScraping = true;
@@ -528,7 +587,8 @@
           isScrapingUI: true, 
           progress: 0, 
           scrapingPage: startPage, 
-          statusMessage: 'Starting scrape...'
+          statusMessage: 'Starting scrape...',
+          showExportButton: false
         });
 
         const pageType = getPageType();
@@ -545,7 +605,17 @@
           scrapeAccountsAllPages(pageCount).then((scraped) => {
             isScraping = false;
             window.lastScrapedAccounts = scraped;
-            updateUI({ isScrapingUI: false, statusMessage: '🎉 Account scraping completed.' });
+            
+            // Save scraped data to Chrome storage
+            chrome.storage.local.set({ scrapedAccountsData }, () => {
+              console.log('Scraped accounts data saved to storage:', scrapedAccountsData.length);
+            });
+            
+            updateUI({ 
+              isScrapingUI: false, 
+              statusMessage: `🎉 Account scraping completed. ${scrapedAccountsData.length} accounts ready for export.`,
+              showExportButton: true
+            });
           }).catch((error) => {
             console.error('Account scraping failed:', error);
             isScraping = false;
@@ -571,6 +641,7 @@
       if (typeof newState.scrapingPage !== 'undefined') scrapingPage = newState.scrapingPage;
       if (typeof newState.statusMessage !== 'undefined') statusMessage = newState.statusMessage;
       if (typeof newState.actualTotalResults !== 'undefined') actualTotalResults = newState.actualTotalResults;
+      if (typeof newState.showExportButton !== 'undefined') showExportButton = newState.showExportButton;
       render();
     });
     
@@ -579,6 +650,7 @@
 
   async function scrapeAccountsAllPages(pagesToScrape) {
     allScrapedContacts = [];
+    scrapedAccountsData = []; // Reset scraped accounts data
     const startPage = getCurrentPageNumber();
     currentPage = startPage;
     pageLimit = startPage + pagesToScrape - 1;
@@ -623,7 +695,44 @@
           updateUI({ statusMessage: `⚠️ No accounts on page ${currentPage}` });
           break;
         }
+
+        // Process and enhance account data
+        const processedAccounts = [];
+        for (const account of data.elements) {
+          const companyId = account.entityUrn ? account.entityUrn.split(':').pop() : null;
+          let enhancedData = {};
+          
+          // Fetch enhanced company details if companyId exists
+          if (companyId) {
+            try {
+              enhancedData = await fetchCompanyDetails(companyId);
+            } catch (error) {
+              console.error('Error fetching enhanced data for company:', companyId, error);
+            }
+          }
+
+          const processedAccount = {
+            companyName: account.name || '',
+            industry: account.industry || enhancedData.industry || '',
+            employeeCount: account.employeeCount || enhancedData.employeeCount || '',
+            employeeCountRange: enhancedData.employeeCountRange || '',
+            location: account.location || enhancedData.location || '',
+            headquarters: enhancedData.headquarters ? 
+              `${enhancedData.headquarters.city || ''}, ${enhancedData.headquarters.geographicArea || ''}`.trim().replace(/^,\s*|,\s*$/g, '') : '',
+            website: account.website || enhancedData.website || '',
+            revenue: enhancedData.formattedRevenue || enhancedData.revenue || '',
+            description: enhancedData.description || '',
+            linkedinUrl: enhancedData.flagshipCompanyUrl || '',
+            entityUrn: account.entityUrn || '',
+            scrapedDate: new Date().toISOString(),
+            pageNumber: currentPage
+          };
+          
+          processedAccounts.push(processedAccount);
+        }
+
         allAccounts = [...allAccounts, ...data.elements];
+        scrapedAccountsData = [...scrapedAccountsData, ...processedAccounts];
         
         const scrapedPageCount = currentPage - startPage + 1;
         const totalPagesToScrape = pageLimit - startPage + 1;
@@ -663,6 +772,88 @@
       console.error('Error fetching company details:', e);
       return {};
     }
+  }
+
+  // CSV Export functionality
+  function convertToCSV(data) {
+    if (!data || data.length === 0) return '';
+    
+    const headers = [
+      'Company Name',
+      'Industry', 
+      'Employee Count',
+      'Employee Count Range',
+      'Location',
+      'Headquarters',
+      'Website',
+      'Revenue',
+      'Description',
+      'LinkedIn URL',
+      'Entity URN',
+      'Scraped Date',
+      'Page Number'
+    ];
+    
+    const csvRows = [headers.join(',')];
+    
+    for (const account of data) {
+      const row = [
+        `"${(account.companyName || '').replace(/"/g, '""')}"`,
+        `"${(account.industry || '').replace(/"/g, '""')}"`,
+        `"${(account.employeeCount || '').toString().replace(/"/g, '""')}"`,
+        `"${(account.employeeCountRange || '').replace(/"/g, '""')}"`,
+        `"${(account.location || '').replace(/"/g, '""')}"`,
+        `"${(account.headquarters || '').replace(/"/g, '""')}"`,
+        `"${(account.website || '').replace(/"/g, '""')}"`,
+        `"${(account.revenue || '').replace(/"/g, '""')}"`,
+        `"${(account.description || '').replace(/"/g, '""')}"`,
+        `"${(account.linkedinUrl || '').replace(/"/g, '""')}"`,
+        `"${(account.entityUrn || '').replace(/"/g, '""')}"`,
+        `"${(account.scrapedDate || '').replace(/"/g, '""')}"`,
+        `"${(account.pageNumber || '').toString().replace(/"/g, '""')}"`
+      ];
+      csvRows.push(row.join(','));
+    }
+    
+    return csvRows.join('\n');
+  }
+
+  function downloadCSV(csvContent, filename) {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportAccountsToCSV() {
+    if (!scrapedAccountsData || scrapedAccountsData.length === 0) {
+      updateUI({ statusMessage: '⚠️ No account data available to export.' });
+      return;
+    }
+    
+    const csvContent = convertToCSV(scrapedAccountsData);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const filename = `linkedin-accounts-${timestamp}.csv`;
+    
+    downloadCSV(csvContent, filename);
+    updateUI({ statusMessage: `✅ Exported ${scrapedAccountsData.length} accounts to ${filename}` });
+  }
+
+  function clearScrapedData() {
+    scrapedAccountsData = [];
+    chrome.storage.local.remove(['scrapedAccountsData'], () => {
+      console.log('Scraped accounts data cleared from storage');
+      updateUI({ 
+        showExportButton: false,
+        statusMessage: 'Scraped data cleared. Ready for new scraping session.'
+      });
+    });
   }
 
   // Register message listener immediately
