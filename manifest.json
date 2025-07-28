@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "LinkedIn Sales Scraper",
+  "version": "1.2.2",
+  "description": "Scrape LinkedIn Sales Navigator and validate emails with MillionVerifier",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "scripting",
+    "tabs",
+    "downloads",
+    "clipboardRead",
+    "notifications",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "https://www.linkedin.com/sales-api/*",
+    "https://dns.google/*",
+    "https://api.millionverifier.com/*",
+    "http://localhost:5000/*",
+    "https://api.firmable.com/*",
+    "https://app.firmable.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://www.linkedin.com https://api.firmable.com https://api.millionverifier.com http://localhost:5000; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkedin.com/sales/search/people*",
+        "https://www.linkedin.com/sales/search/company*",
+        "https://app.firmable.com/list*",
+        "https://app.firmable.com/dashboard/list*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/pngimg.com - magnet_PNG103227.png",
+      "32": "icons/pngimg.com - magnet_PNG103227.png",
+      "48": "icons/pngimg.com - magnet_PNG103227.png",
+      "128": "icons/pngimg.com - magnet_PNG103227.png"
+    }
+  },
+  "icons": {
+    "16": "icons/pngimg.com - magnet_PNG103227.png",
+    "32": "icons/pngimg.com - magnet_PNG103227.png",
+    "48": "icons/pngimg.com - magnet_PNG103227.png",
+    "128": "icons/pngimg.com - magnet_PNG103227.png"
+    },
+  "web_accessible_resources": [
+    {
+      "resources": ["content.js", "background.js"],
+      "matches": ["https://www.linkedin.com/*", "https://app.firmable.com/*"]
+    }
+  ],
+  "externally_connectable": {
+    "matches": ["http://localhost:3000/*"]
+  }
+}
